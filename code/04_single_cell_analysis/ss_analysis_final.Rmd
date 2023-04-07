@@ -1,0 +1,343 @@
+---
+title: "C. atrox spinal cord single-cell RNA-Seq data (gene level) with alignment to C. tigris genome"
+output: 
+  html_document:
+    toc: TRUE
+    toc_depth: 4
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+author:
+  - Jason Gallant^[Michigan State University Department of Integrative Biology, jgallant@msu.edu]
+  
+bibliography: packages.bib
+---
+
+```{r, setup, include=FALSE, message=FALSE}
+root<-rprojroot::find_root(".git/index")
+knitr::opts_knit$set(root.dir = root)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(forcats)
+library(rtracklayer)
+library(kableExtra)
+mycolors=c("#E22027","#393184")
+gtf <- as.data.frame(import(file.path(root,"reference_data/genomic.gtf")))
+```
+
+## Summary
+
+The following provides a description of single-cell RNA-seq analysis of motorneurons collected and sequenced from Crotalus atrox in 2018.
+
+In this analysis, I examined expression at the \*gene level\* between locomotor and spinal cord cells to determine genes that were differentially expressed, using the tiger rattlesnake as a reference. We see 26 differentially expressed genes, which includes some interesting candidates, but no potassium channels, somewhat consistent in magnitude with an earlier analysis.
+
+A final plot compares genes elected in another analysis for qPCR, showing that the ss-rnaseq data is consistent with those results.
+
+## Methods
+
+### Cell Collection
+
+\<BORIS NEEDS TO ADD METHODS DETAILS HERE\>
+
+### Library preparation
+
+Boris delivered 2 plates with 54 locomotor samples and 78 shaker samples to Alexander Janjic in May 2018 see (Boris_June2018.pdf). Elsewhere, the laboratory notes say that there were 54 locomotor cells and 62 shaker cells. In the notes, it says During centrifugation, 3 locomotor and 16 shaker samples were lost due to an accident. These numbers don't add up.
+
+Most plausibly, it looks like there should be 51 locomotor cells and 62 shaker cells in in the experiment.
+
+Library was prepared using the [mcSCRB-seq protocol](dx.doi.org/10.17504/protocols.io.nrkdd4w) v 1.1 [@jwbbagnoli2018b].
+
+i7 index N714 was used for locomotor cell plate, i7 index N715 was used for shaker cell plate.
+
+Barcode sets per cell were unknown, requiring us to digitally demultiplex the cells...
+
+| Index    | Name   | Nextera | Phenotype |
+|----------|--------|---------|-----------|
+| GCTCATGA | Boris1 | N714    | Locomotor |
+| ATCTCAGG | Boris2 | N715    | Shaker    |
+
+Other laboratory specific notes are in the file Boris_June2018.pdf set from Alexander Janjic in June 2018.
+
+### Sequencing
+
+The samples were then pooled and run on 0.5 lanes of XX instrument. (NEED MORE DETAILS FROM ALEXSANDAR, if he remembers...!)
+
+### Analysis
+
+Raw single cell data was processed using the zUMIs pipeline [@parekh2018], which filters reads with low-quality barcodes and UMIs, and then uses the STAR aligner v2.7.3a [@Dobin2013] to align reads to the Croatuls tigris genome (NCBI RefSeq GCF_016545835.1) [@Margres2021]. zUMIs then predicts cell barcodes and collapses UMIs to create a read count table for downstream analysis.
+
+Read count tables were then analyzed using the [@Seurat] package to determine expression differences between cell pools.
+
+All code for data analysis can be found at (<https://github.com/msuefishlab/INSERT_REPO_NAME>)
+
+## Results
+
+### Import ZUMIs Summary Data
+
+```{r, message=FALSE}
+rps<-read.table(file.path(root,"output_data/single_snakes/zUMIs_output/stats/single_snakes.readspercell.txt"),header = T)
+tc<-data.frame(rps)
+tc$type<-factor(tc$type)
+tc$plate<-as.factor(substr(tc$RG,7,14))
+tc$cell<-as.factor(substr(tc$RG,0,6))
+levels(tc$plate)[1] <- "Bad"
+levels(tc$plate)[2] <- "ATCTCAGG"
+levels(tc$plate)<-c("Bad","Shaker","Locomotor")
+
+featColors<-c("#1A5084", "#914614" ,"#118730","grey33","tan1","#631879FF","gold1","grey73","firebrick3")
+names(featColors)<-c("Exon","Intron+Exon","Intron","Unmapped","Ambiguity","MultiMapping","Intergenic","Unused BC","User")
+
+
+tc %>% 
+  filter(plate != "Bad") %>%
+  filter(type != "Unmapped") %>%
+  ggplot(aes(y=N,fill=plate))+
+        geom_density(alpha=0.7) +
+        xlab("") +
+        ylab("log10(Number of reads)") +
+        scale_y_log10()+ 
+        coord_flip()+
+        scale_fill_manual(values=mycolors)+
+        geom_hline(yintercept = 1e04)
+```
+
+Based on filtering out cells with \< 10,000 reads, we get a number that looks *similar* to the number of input cells, with 10 more locomotor cells then we are supposed to have... let's dig into this a bit more.
+
+```{r, message=FALSE}
+tc %>% filter(plate != "Bad" & N > 1e+04 & type != "Unmapped") %>%group_by(cell,plate) %>% summarise(Total=sum(N)) %>% group_by(plate) %>% summarise(n=n()) %>% kbl() %>% kable_styling()
+```
+
+### Import ZUMIs and Convert to Seurat Object
+
+```{r, warning=FALSE, message=FALSE}
+zumis_output <- readRDS(file.path(root,"output_data/single_snakes/zUMIs_output/expression/single_snakes.dgecounts.rds"))
+umis <- as.matrix(zumis_output$umicount$inex$all)
+seu <- Seurat::CreateSeuratObject(counts = umis)
+seu@meta.data$celltype<-as.factor(substr(row.names(seu@meta.data),7,14))
+levels(seu@meta.data$celltype)<-c("shaker","shaker","locomotor")
+```
+
+#### QC
+
+Right out of the gate, zUMIs reduces the 192 possible barcodes from our file to to 162 potential cells (equally distributed between the two phenotypes). We know that there were less cells than this, suggesting that some of these cells represent "noise"...
+
+```{r}
+seu@meta.data %>% group_by(celltype) %>% summarise(n=n()) %>% kbl() %>%
+  kable_styling()
+```
+
+##### Identify Ribosomal Genes
+
+We can see right away that most cells are \~ 20% ribosomal RNA, but locomotor cells have a long tail, suggesting some "bad" cells with low ribosomal RNA in them...
+
+```{r}
+#grep("^RP[LS]",rownames(seu@assays$RNA@counts),value = TRUE)
+PercentageFeatureSet(seu,pattern="^RP[LS]|LOC120298527|LOC120298533") -> seu$percent.Ribosomal
+
+seu@meta.data %>%
+  	ggplot(aes(x=percent.Ribosomal, color = celltype, fill=celltype)) +
+  	geom_density(alpha = 0.7) +
+  	theme_classic()+
+    scale_fill_manual(values=mycolors)+
+    geom_vline(xintercept=12)
+```
+
+##### Calculate Percent Largest Gene
+
+```{r}
+apply(
+  seu@assays$RNA@counts,
+  2,
+  max
+) -> seu$largest_count
+
+apply(
+  seu@assays$RNA@counts,
+  2,
+  which.max
+) -> seu$largest_index
+
+rownames(seu)[seu$largest_index] -> seu$largest_gene
+
+100 * seu$largest_count / seu$nCount_RNA -> seu$percent.Largest.Gene
+```
+
+##### Calculate Read Counts
+
+Again, we can see a pretty sharp bimodal distribution with a large number of cells \< 10,000 reads and another large group \> 10,000 reads...
+
+```{r}
+seu@meta.data %>%
+  	ggplot(aes(x=nCount_RNA, color = celltype, fill=celltype)) +
+  	geom_density(alpha = 0.7) +
+  	theme_classic()+
+    scale_x_log10()+
+    scale_fill_manual(values=mycolors)+
+    geom_vline(xintercept=1.4e04)
+```
+
+Let's look at the number of unique genes found in each sample. Here we can see that shaker cells have a strange distribution: one population has about 1000 unique features which is not present in locomotor cells at the same frequency. In the majority of cells we detect approximately 7500 unique features (genes)...
+
+```{r}
+seu@meta.data %>%
+  	ggplot(aes(x=nFeature_RNA, color = celltype, fill=celltype)) +
+  	geom_density(alpha = 0.7) +
+  	theme_classic()+
+    scale_x_log10()+
+    scale_fill_manual(values=mycolors)+
+    geom_vline(xintercept=3000)
+```
+
+##### Filtering
+
+Based on these values, we have a reasonable set of filters to propose:
+
+```{r}
+filtered_seu <- subset(
+  seu,
+    nCount_RNA>1.4e04 &
+    nFeature_RNA > 3000 &
+    percent.Ribosomal > 12)
+
+filtered_seu@meta.data %>% group_by(celltype) %>% summarise(n=n()) %>% kbl() %>%
+  kable_styling()
+```
+
+This gives us a total of 90 cells to examine, let's take a look at the distributions of cells a bit more closely (turning off log scales now...)
+
+```{r}
+filtered_seu@meta.data %>%
+  	ggplot(aes(x=nCount_RNA, color = celltype, fill=celltype)) +
+  	geom_density(alpha = 0.7) +
+  	theme_classic()+
+    scale_fill_manual(values=mycolors)+
+    geom_vline(xintercept=1.4e04)+
+    geom_vline(xintercept=1.25e05)
+```
+
+What I see here is a bit of "ringing" in both samples with very high read counts, which I think are referred to as "doublets" in ss-RNAseq land. Let's get rid of those now too!
+
+```{r}
+filtered_seu <- subset(
+  seu,
+    nCount_RNA>1.4e04 &
+    nFeature_RNA > 3000 &
+    percent.Ribosomal > 12 &
+    nCount_RNA<1.25e05 )
+
+filtered_seu@meta.data %>% group_by(celltype) %>% summarise(n=n()) %>% kbl() %>%
+  kable_styling()
+```
+
+This gives us a grand total of 75 cells. Let's have a look at the distributions of our QC data in this filtered dataset.
+
+```{r warning=FALSE, message=FALSE, fig.height=10, fig.width=10}
+Idents(filtered_seu) <- 'celltype'
+qc_plots<-VlnPlot(filtered_seu,features=c("nFeature_RNA", "nCount_RNA","percent.Ribosomal"),alpha(0.5),combine=FALSE)
+for(i in 1:length(qc_plots)) {
+  qc_plots[[i]] <- qc_plots[[i]] + scale_fill_manual(values=mycolors)+ theme(legend.position = 'none')
+}
+CombinePlots(qc_plots)
+
+```
+
+The distributions of our QC data seem to mostly overlap and make good biological sense. Let's proceeed!
+
+#### Clustering
+
+What are the most variable genes in our dataset, potentially prediciting what cell type cluster they belong to?
+
+```{r, warning=FALSE, message=FALSE}
+filtered_seu <- NormalizeData(filtered_seu, normalization.method = "RC", scale.factor = 1e6)
+filtered_seu <- FindVariableFeatures(filtered_seu, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(filtered_seu), 10)
+plot1 <- VariableFeaturePlot(filtered_seu)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+```
+
+```{r,warning=FALSE, message=FALSE}
+ScaleData(filtered_seu,features=rownames(filtered_seu)) -> filtered_seu
+RunPCA(filtered_seu,features=VariableFeatures(filtered_seu)) -> filtered_seu
+DimPlot(filtered_seu,reduction="pca",group.by="celltype") + scale_color_manual(values=mycolors)
+```
+
+I'm not seeing a super clean separation between shaker and locomotor cells, but there is sort of a trend here...
+
+#### Differential Expression
+
+```{r,message=FALSE}
+Idents(filtered_seu) <- 'celltype'
+markers<-FindMarkers(filtered_seu,ident.1 = "shaker", min.pct = 0.25)
+sig_genes<-subset(markers, p_val_adj<0.1)
+sig_genes$id<-rownames(sig_genes)
+sig_genes<-as.data.frame(sig_genes)
+
+
+sig_list<-merge(sig_genes,subset(gtf,type=="transcript") %>% group_by(gene) %>% filter(!duplicated(gene)) %>% select(gene,product),by.x="id",by.y="gene",all.x=TRUE)
+
+sig_list[,c(1,7,2,3,4,5,6)] %>% arrange(p_val_adj) %>% kbl() %>% kable_styling()
+```
+
+I've been able to identify 26 DE genes between shaker and locomotor cells. Of particular interest might be the following: NALCN (sodium leak channel) and splicing factor SWAP. Here are expression plots for all 26 genes.
+
+```{r, fig.height=25, fig.width=25, warning=FALSE, message=FALSE,out.height=800,out.width=800}
+myfeatures<-sig_list$id
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=myfeatures,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.5) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+
+Here are the genes examined in our qPCR assay:
+
+```{r, fig.height=10, warning=FALSE, message=FALSE}
+goi<-c("HOXD9","KCNQ3","KCNQ2","LOC120319564")
+
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+
+Finally, CHAT appears to be a good marker for motorneurons, it's highly expressed and seems to be uniformly abundant in both samples...
+
+```{r, fig.height=5, warning=FALSE, message=FALSE}
+goi_motorneuron_markers<-c("CHAT")
+
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi_motorneuron_markers,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+Here are the additional genes requested by Max:
+
+```{r, fig.height=10, warning=FALSE, message=FALSE}
+goi<-c("ABCC8","KCNJ8","KCNJ11")
+
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+Here are the additional genes requested by Boris:
+```{r, fig.height=10, warning=FALSE, message=FALSE}
+goi<-c("NALCN")
+
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+
+## References

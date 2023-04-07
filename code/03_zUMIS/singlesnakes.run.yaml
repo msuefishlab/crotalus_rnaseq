@@ -1,0 +1,51 @@
+project: single_snakes
+sequence_files:
+  file1:
+    name: ./data/ss/R1.fastq.gz
+    base_definition:
+    - BC(1-6)
+    - UMI(7-16)
+  file2:
+    name: ./data/ss/R2.fastq.gz
+    base_definition: cDNA(1-50)
+  file3:
+    name: ./data/index.fq.gz
+    base_definition:
+      - BC(1-8)
+reference:
+  STAR_index: ./reference_data/tigris_genome/
+  GTF_file: ./reference_data/GCF_016545835.1_ASM1654583v1_genomic.gtf
+  additional_STAR_params: ''
+  additional_files: ~
+out_dir: ./output_data/single_snakes
+num_threads: 16
+mem_limit: 0
+filter_cutoffs:
+  BC_filter:
+    num_bases: 1
+    phred: 20
+  UMI_filter:
+    num_bases: 1
+    phred: 20
+barcodes:
+  barcode_num: ~
+  barcode_file: ./reference_data/SCRBseq_96_AllSets_justBCs.txt
+  automatic: yes
+  BarcodeBinning: 0
+  nReadsperCell: 100
+counting_opts:
+  introns: yes
+  downsampling: '0'
+  strand: 0
+  Ham_Dist: 0
+  velocyto: no
+  primaryHit: yes
+  twoPass: yes
+make_stats: yes
+which_Stage: Filtering
+samtools_exec: samtools
+pigz_exec: pigz
+STAR_exec: STAR
+Rscript_exec: Rscript
+zUMIs_directory: ./zUMIs
+read_layout: SE

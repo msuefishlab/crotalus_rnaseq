@@ -1,0 +1,218 @@
+---
+title: "C. atrox spinal cord bulk RNA-Seq data (gene level) with alignment to C. tigris genome"
+output: 
+  html_document:
+    toc: TRUE
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+author:
+  - Jason Gallant^[Michigan State University Department of Integrative Biology, jgallant@msu.edu]
+  
+bibliography: packages.bib
+---
+
+```{r, setup, include=FALSE, message=FALSE}
+root<-rprojroot::find_root(".git/index")
+knitr::opts_knit$set(root.dir = root)
+library(tximport)
+library(DESeq2)
+library(tidyverse)
+library(ggpointdensity)
+library(stringr)
+theme_set(theme_bw())
+mycolors=c("#E22027","#393184","#31847c")
+```
+## Summary
+  The following provides a description of bulk RNA-seq analysis of ventral root ganglia collected and sequenced from Crotalus atrox in 2016.  
+  
+In this analysis, I examined expression at the *gene level* between Medial+Rostral samples to caudal samples to determine genes that were differentially expressed, using the tiger rattlesnake as a reference.  We see 12 differentially expressed genes, the majority of which are homeobox transcription factors, consistent with the analysis performed in 2017 based on a denovo transcriptome assembly.  A final plot compares genes selected in another analysis for qPCR, which is highly consistent with those results.
+
+## Methods
+
+### Library preparation
+
+Tissues were dissected from rostral(RSC), medial (MSC), and caudal (CSC) spinal cord from three individual Crotalus atrox (1-3) RNA was isolated from tissues using a Qiagen RNEasy Mini Kit following manufactuer's instructions. RNA was submitted to MSU RTSF Genomics Core, where Sequencing libraries were prepared using Illumina TruSeq Stranded mRNA Library Preparation Kit. Libraries were QC'd and quantitated using a combination of Qubit dsDNA assay, Caliper LabChipGX and Kapa Illumina Library Quantification qPCR kits. The libraries within each project were pooled for multiplexed sequencing.
+
+### Sequencing
+
+Each pool was loaded on one lane of an Illumina HiSeq 2500 Rapid Run (v2) flow cell to target \~15million paired reads per sample. To reach this target, additional sequencing was performed on a MiSeq using the same read format, and results were pooled.
+
+### Analysis
+
+Raw data was trimmed for adapter sequences and low quality sequences using Trimmomatic v0.38 [@Bolger2014] with the following parameters LEADING:5 TRAILING:5 SLIDINGWINDOW:4:5 MINLEN:25. Next, RSEM v1.3.3 [@Li2011]. was used with the STAR aligner v2.7.3a [@Dobin2013] to align reads to predicted transcripts from the Croatuls tigris genome (NCBI RefSeq GCF_016545835.1) [@Margres2021]. Uniquely mapped reads from our samples ranged from 75-79%.
+
+RSEM counts were then imported into R using tximport v.1.26.0 [@R-tximport] and differential expression was analysed using DESeq2 v1.38.1 [@R-DESeq2]. Differential expression analysis was performed by comparing expression in the CSC ("shaker") to the combined RSC+MSC ("locomotor") samples using a log-ratio test (LRT). P-values were adjusted for multiple comparisons using the Benjamini and Hochberg method [@benjamini1995], with a false discovery rate (FDR) threshold of 0.1. All code for data analysis can be found at (<https://github.com/msuefishlab/INSERT_REPO_NAME>)
+
+## Results
+
+### Import Data from RSEM
+
+```{r, message=FALSE}
+file_names<-list.files('./output_data/rsem_output',pattern="\\genes.results$")
+files <- file.path('./output_data/rsem_output', file_names)
+names(files) <- str_split_fixed(file_names,"\\.", 2)[,1]
+
+txi.rsem <- tximport(files, type = "rsem", txIn = FALSE, txOut = FALSE)
+#head(txi.rsem$counts)
+```
+
+```{r}
+tissue_type<-factor(substr(colnames(txi.rsem$counts),2,4))
+sampleTable <- data.frame(condition = tissue_type)
+rownames(sampleTable) <- colnames(txi.rsem$counts)
+
+
+zero_length_and_unexpressed = (apply(txi.rsem$abundance, 1, max) == 0) &
+                              (apply(txi.rsem$length, 1, min) == 0)
+
+txi.rsem$length = txi.rsem$length[!zero_length_and_unexpressed,]
+txi.rsem$abundance = txi.rsem$abundance[!zero_length_and_unexpressed,]
+txi.rsem$counts = txi.rsem$counts[!zero_length_and_unexpressed,]
+
+dds <- DESeqDataSetFromTximport(txi.rsem, sampleTable, ~condition)
+```
+
+Here we are going to group the medial and rostral as "locomotor" tissue and the caudal as "shaker" tissue.
+
+```{r,message=FALSE}
+#keep <- rowSums(counts(dds)) >= 10
+#dds <- dds[keep,]
+levels(dds$condition)<-c("shaker","medial_locomotor","rostral_locomotor")
+dds
+```
+
+### Principal Components Analysis
+
+```{r}
+vsdata <- vst(dds, blind=FALSE)
+plotPCA(vsdata, intgroup="condition")+scale_color_manual(values=mycolors)
+```
+
+I would say that this isn't impressive clustering, but could represent the overall similarity between these tissue samples. Let's proceed.
+
+### Differential Expression Analysis
+
+```{r}
+levels(dds$condition)<-c("shaker","locomotor","locomotor")
+dds<-DESeq(dds, test="LRT", reduced= ~1)
+res <- results(dds,lfcThreshold = 0, cooksCutoff=T, independentFiltering = T)
+head(results(dds, tidy=TRUE))
+```
+
+```{r}
+summary(res)
+```
+
+Looks like we see 12 genes that are differentially expressed, all up in the shaker samples.
+
+```{r}
+res <- res[order(res$padj),]
+subset(res, padj < 0.1)
+```
+
+```{r, fig.height=5, fig.width=10}
+plot_MA = function(logCounts, logFoldChange, FDR, xlab="logCounts", ylab="logFC", title="MA plot", pch=20) {
+
+    plot(logCounts, logFoldChange, col=ifelse(FDR<=0.1, "red", "black"), xlab=xlab, ylab=ylab, main=title, pch=pch);
+
+}
+
+
+plot_Volcano = function(logFoldChange, pval,FDR, xlab="logFC", ylab="-log10(p-value)", title="Volcano plot", pch=20) {
+
+   plot(logFoldChange, -1*log10(pval), col=ifelse(FDR<=0.1, "red", "black"), xlab=xlab, ylab=ylab, main=title, pch=pch);
+
+}
+
+
+plot_MA_and_Volcano = function(logCounts, logFoldChange, pval, FDR, xlab="logCounts", ylab="logFC", title="MA plot") {
+
+    def.par = par(no.readonly = TRUE) # save default, for resetting...
+
+    gridlayout = matrix(c(1:2),nrow=1,ncol=2, byrow=TRUE);
+    layout(gridlayout, widths=c(1,1,1,1), heights=c(1,1,1,1)) 
+
+    plot_MA(logCounts, logFoldChange, FDR);
+    plot_Volcano(logFoldChange, pval, FDR);
+
+    # draw again, but use a smaller dot for data points
+    #plot_MA(logCounts, logFoldChange, FDR, pch='.');
+    #plot_Volcano(logFoldChange, FDR, pch='.');
+    
+
+    par(def.par)   
+        
+    
+}
+
+baseMeanA <- rowMeans(counts(dds, normalized=TRUE)[,colData(dds)$condition == "shaker"])
+baseMeanB <- rowMeans(counts(dds, normalized=TRUE)[,colData(dds)$condition == "locomotor"])
+
+trin_res = cbind(baseMeanA, baseMeanB, as.data.frame(res))
+trin_res = cbind(id=rownames(trin_res), as.data.frame(trin_res))
+trin_res$padj[is.na(trin_res$padj)]  <- 1
+
+plot_MA_and_Volcano(log2(trin_res$baseMean), trin_res$log2FoldChange, trin_res$pvalue,trin_res$padj, 0.1)
+```
+
+Let's look at the DE of the 'Significant' Genes at FDR=0.1
+
+```{r, fig.height=10, fig.width=10}
+# Define the genes of interest.
+goi<-row.names(subset(res, padj < 0.1))
+tcounts <- t(log2((counts(dds[goi, ], normalized=TRUE, replaced=FALSE)+.5))) %>%
+  merge(colData(dds), ., by="row.names") %>%
+  gather(gene, expression, (ncol(.)-length(goi)+1):ncol(.))
+
+ggplot(tcounts, aes(condition, expression, fill=condition)) + 
+  geom_boxplot() + 
+  scale_fill_manual(values=mycolors) +
+  facet_wrap(~gene) + 
+  labs(x="Tissue", 
+       y="Expression (log normalized counts)", 
+       fill="Tissue", 
+       title="Top Results")
+  
+```
+
+What about genes that we did qPCR on?
+
+```{r, fig.height=10, fig.width=10}
+goi<-c("HOXD9","KCNQ3","KCNQ2","LOC120319564")
+
+tcounts <- t(log2((counts(dds[goi, ], normalized=TRUE, replaced=FALSE)+.5))) %>%
+  merge(colData(dds), ., by="row.names") %>%
+  gather(gene, expression, (ncol(.)-length(goi)+1):ncol(.))
+
+ggplot(tcounts, aes(condition, expression, fill=condition)) + 
+  geom_boxplot() + 
+  scale_fill_manual(values=mycolors) +
+  facet_wrap(~gene,scales="free_y") +
+  labs(x="Tissue", 
+       y="Expression (log normalized counts)", 
+       fill="Tissue", 
+       title="Genes Selected for qPCR")
+
+```
+
+Looks largely consistent with what we saw in qPCR of bulk tissues- HOXD9 (misnamed in earlier analysis) is highly differentially expressed, where KCNQ3 is potentially differentially expressed, though whether this magnitude is meaningful is unclear. KCNQ2 and KCNA1 (here as LOC120319564) are not significant.
+
+What about NALCN?
+```{r, fig.height=10, fig.width=10}
+goi<-c("NALCN")
+
+tcounts <- t(log2((counts(dds[goi, ], normalized=TRUE, replaced=FALSE)+.5))) %>%
+  merge(colData(dds), ., by="row.names") %>%
+  gather(gene, expression, (ncol(.)-length(goi)+1):ncol(.))
+
+ggplot(tcounts, aes(condition, expression, fill=condition)) + 
+  geom_boxplot() + 
+  scale_fill_manual(values=mycolors) +
+  facet_wrap(~gene,scales="free_y") +
+  labs(x="Tissue", 
+       y="Expression (log normalized counts)", 
+       fill="Tissue", 
+       title="NACLN")
+
+```
+
+## References
