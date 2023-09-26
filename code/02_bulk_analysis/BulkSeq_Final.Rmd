@@ -215,4 +215,47 @@ ggplot(tcounts, aes(condition, expression, fill=condition)) +
 
 ```
 
+## New Analysis: Potassium Channel Heatmap
+```{r}
+kv_channels<-c("KCNH8","KCNH3","KCNH2","KCNH6","KCNH1","KCNH5","KCNQ3","KCNQ5","KCNQ4","KCNQ1","KCNQ2","KCNS3","KCNS1","KCNS2","KCNV1","KCNG1","KCNG4","KCNF1","KCNV2","KCNV3","KCND1","KCND2","KCND3","KCNB1","KCNB2","KCNC2","KCNC1","KCNC4","KCNC3","KCNA6","KCNA1","KCNA3","KCNA2","KCNA7","KCNA4","KCNA10","KCNA5")
+
+kv_names<-c("Kv12.1","Kv12.2","Kv11.3","Kv11.1","Kv10.1","Kv10.2","Kv7.3","Kv7.5","Kv7.4","Kv7.1","Kv7.2","Kv9.3","Kv9.1","Kv9.2","Kv8.1","Kv6.1","Kv6.4","Kv5.1","Kv8.2","Kv6.3","Kv4.1","Kv4.2","Kv4.3","Kv2.1","Kv2.2","Kv3.2","Kv3.1","Kv3.4","Kv3.3","Kv1.6","Kv1.1","Kv1.3","Kv1.2","Kv1.7","Kv1.4","Kv1.8","Kv1.5")
+
+
+kv_table <- data.frame(
+  Names = kv_names,
+  row.names = kv_channels
+)
+
+genes_we_have<-which(rownames(dds) %in% kv_channels)
+
+kv_names_we_have<-kv_table[rownames(dds[genes_we_have,]),]
+
+kv_dds<-dds[genes_we_have,]
+
+indices <- match(rownames(kv_dds), rownames(kv_table))
+rownames(kv_dds) <- kv_table$Names[indices]
+
+tcounts <- t(log2((counts(kv_dds, normalized=TRUE, replaced=FALSE)+.5))) %>%
+  merge(colData(dds), ., by="row.names") %>%
+  gather(gene, expression, (ncol(.)-length(kv_dds)+1):ncol(.))
+
+
+tcounts$expression<-as.numeric(tcounts$expression)
+tcounts$Row.names <- as.character(tcounts$Row.names)
+tcounts$gene <- as.character(tcounts$gene)
+
+ggplot(tcounts, aes(x = Row.names, y = gene)) +
+  geom_tile(aes(fill = expression), color = "white") +
+  scale_fill_gradient2(low = "white", mid = "yellow", high = "red", midpoint =4) +
+  theme_minimal() +
+  labs(title = "Potassium Channel Heatmap - Bulk Sequencing", x = "Row Names", y = "Gene") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_grid(. ~ condition, scales="free_x", space="free")
+
+```
+
+
+
+
 ## References

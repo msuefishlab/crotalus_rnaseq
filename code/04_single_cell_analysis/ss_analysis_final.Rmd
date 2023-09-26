@@ -339,5 +339,124 @@ for(i in 1:length(plots)) {
 }
 CombinePlots(plots)
 ```
+## KV 7.2 and KV 7.3
+```{r, fig.height=5, warning=FALSE, message=FALSE}
+goi_motorneuron_markers<-c("KCNQ3")
 
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi_motorneuron_markers,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+```{r, fig.height=5, warning=FALSE, message=FALSE}
+goi_motorneuron_markers<-c("KCNQ2")
+
+plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi_motorneuron_markers,combine=FALSE) 
+
+for(i in 1:length(plots)) {
+  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
+}
+CombinePlots(plots)
+```
+
+## New Heatmap Analaysis
+```{r, fig.height=25, fig.width=25, warning=FALSE, message=FALSE,out.height=800,out.width=800}
+
+kv_channels<-c("KCNH8","KCNH3","KCNH2","KCNH6","KCNH1","KCNH5","KCNQ3","KCNQ5","KCNQ4","KCNQ1","KCNQ2","KCNS3","KCNS1","KCNS2","KCNV1","KCNG1","KCNG4","KCNF1","KCNV2","KCNV3","KCND1","KCND2","KCND3","KCNB1","KCNB2","KCNC2","KCNC1","KCNC4","KCNC3","KCNA6","KCNA1","KCNA3","KCNA2","KCNA7","KCNA4","KCNA10","KCNA5")
+
+kv_names<-c("Kv12.1","Kv12.2","Kv11.3","Kv11.1","Kv10.1","Kv10.2","Kv7.3","Kv7.5","Kv7.4","Kv7.1","Kv7.2","Kv9.3","Kv9.1","Kv9.2","Kv8.1","Kv6.1","Kv6.4","Kv5.1","Kv8.2","Kv6.3","Kv4.1","Kv4.2","Kv4.3","Kv2.1","Kv2.2","Kv3.2","Kv3.1","Kv3.4","Kv3.3","Kv1.6","Kv1.1","Kv1.3","Kv1.2","Kv1.7","Kv1.4","Kv1.8","Kv1.5")
+
+kv_table <- data.frame(
+  Names = kv_names,
+  row.names = kv_channels
+)
+
+kv_filtered_seu<-subset(x=filtered_seu, features=kv_channels)
+
+label_mapping <- setNames(kv_table$Names, rownames(kv_table))
+
+
+#DoHeatmap(object=kv_filtered_seu,features=kv_channels,slot="counts")+  scale_fill_gradientn(colors=c("white", "yellow", "red"))+ scale_y_discrete(labels = label_mapping)
+
+#VlnPlot(kv_filtered_seu,features=kv_channels, stack= TRUE, fill.by = "ident", flip=TRUE, sort="decreasing") +coord_flip() +scale_y_discrete(labels = label_mapping)
+
+# Step 1: Calculate average expression values for each feature across all cell types
+avg_expr <- AverageExpression(kv_filtered_seu, features = kv_channels, group.by = "celltype")
+avg_expr <- avg_expr$RNA  # Replace 'RNA' with the appropriate assay name if different
+
+# Calculate the average expression for each feature across all cell types
+avg_expr_feature <- rowMeans(avg_expr, na.rm = TRUE)
+
+# Step 2: Sort features by their average expression
+sorted_features <- sort(avg_expr_feature, decreasing = TRUE)
+
+# Step 3: Generate and sort plots
+plots <- VlnPlot(kv_filtered_seu, group.by="celltype", split.by = "celltype", features=names(sorted_features), flip=TRUE, combine=FALSE, sort=TRUE)
+
+# Number of columns in the combined plot
+n_col <- 2
+
+# Number of rows needed, assuming you fill column-wise
+n_row <- ceiling(length(plots) / n_col)
+
+# Generate and sort plots
+plots <- VlnPlot(kv_filtered_seu, group.by="celltype", split.by = "celltype", features=names(sorted_features), flip=TRUE, combine=FALSE, sort=TRUE)
+
+for(i in 1:length(plots)) {
+  # Identify the last plot in each column
+  last_in_columns <- seq(from = n_col * (n_row - 1) + 1, to = n_col * n_row, by = 1)
+  
+  # Extract the feature name from the plot title
+  feature_name <- plots[[i]]$labels$title
+  
+  # Look up the corresponding protein name
+  protein_name <- kv_table[feature_name, "Names"]
+  
+  # Remove x-axis and y-axis labels for all but the last plot in each column
+  if (i %in% last_in_columns || i == length(plots)) {
+    # Keep x-axis labels, remove y-axis labels and line
+    plots[[i]] <- plots[[i]] + 
+      ggtitle(paste0(protein_name,"(",feature_name,")")) +  # Replace title
+      scale_fill_manual(values=mycolors) + 
+      coord_flip() +
+      ylim(0, 600) +
+      scale_x_discrete(expand = c(0, 0)) +  # Start x-axis at 0
+      theme(axis.line.y=element_blank(),  # Remove y-axis line
+            axis.title.y=element_blank(),
+            axis.text.y=element_blank(),
+            axis.ticks.y=element_blank(),
+            plot.title.position = "plot",
+            plot.title = element_text(hjust = 0),
+            legend.position="none")
+  } else {
+    # Remove both x-axis and y-axis labels and line
+    plots[[i]] <- plots[[i]] + 
+      ggtitle(paste0(protein_name,"(",feature_name,")")) +  # Replace title
+      scale_fill_manual(values=mycolors) + 
+      coord_flip() +
+      ylim(0, 500) +
+      scale_x_discrete(expand = c(0, 0)) +  # Start x-axis at 0
+      theme(axis.line.y=element_blank(),  # Remove y-axis line
+            axis.title.y=element_blank(),
+            axis.text.y=element_blank(),
+            axis.ticks.y=element_blank(),
+            axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            plot.title.position = "plot",
+            plot.title = element_text(hjust = 0),
+            axis.ticks.x=element_blank(),
+            legend.position="none")
+  }
+}
+
+# Combine the sorted plots
+CombinePlots(plots, n_col)
+
+
+```
+
+```
+```
 ## References
