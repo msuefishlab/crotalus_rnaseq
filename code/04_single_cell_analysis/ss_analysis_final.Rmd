@@ -21,6 +21,7 @@ library(ggplot2)
 library(forcats)
 library(rtracklayer)
 library(kableExtra)
+library(tidyr)
 mycolors=c("#E22027","#393184")
 gtf <- as.data.frame(import(file.path(root,"reference_data/genomic.gtf")))
 ```
@@ -276,10 +277,44 @@ sig_genes<-as.data.frame(sig_genes)
 
 sig_list<-merge(sig_genes,subset(gtf,type=="transcript") %>% group_by(gene) %>% filter(!duplicated(gene)) %>% select(gene,product),by.x="id",by.y="gene",all.x=TRUE)
 
-sig_list[,c(1,7,2,3,4,5,6)] %>% arrange(p_val_adj) %>% kbl() %>% kable_styling()
+#sig_list[,c(1,7,2,3,4,5,6)] %>% arrange(p_val_adj) %>% kbl() %>% kable_styling()
 ```
 
 I've been able to identify 26 DE genes between shaker and locomotor cells. Of particular interest might be the following: NALCN (sodium leak channel) and splicing factor SWAP. Here are expression plots for all 26 genes.
+
+
+```{r}
+# 1. Extract normalized expression values for significant genes
+sig_gene_names <- rownames(sig_genes)
+expression_values_norm <- filtered_seu[["RNA"]]@data[sig_gene_names, ]
+
+# 2. Convert to a dense matrix and then to a data frame
+expression_values_norm_matrix <- as.matrix(expression_values_norm)
+expression_values_df <- as.data.frame(expression_values_norm_matrix)
+
+# 3. Transpose the data frame so that cell barcodes become row names
+expression_values_df_transposed <- as.data.frame(t(expression_values_df))
+
+# 4. Add cell type information
+cell_types <- filtered_seu$celltype
+expression_values_df_transposed$celltype <- cell_types[rownames(expression_values_df_transposed)]
+
+# 5. Reshape to long format
+expression_values_long <- gather(expression_values_df_transposed, key = "gene", value = "expression", -celltype)
+
+# 6. Arrange by feature and group by cell type, then calculate mean expression
+expression_values_grouped <- expression_values_long %>%
+  group_by(celltype, gene) %>%
+  summarise(mean_expression = mean(expression, na.rm = TRUE))
+
+# 7. Spread the data to wide format
+expression_values_wide <- expression_values_grouped %>%
+  spread(key = celltype, value = mean_expression)
+  
+final_table <- merge(expression_values_wide, sig_list, by.x = "gene", by.y = "id", all.x = TRUE)
+
+final_table[,c(1,9,2,3,5,8)] %>% arrange(p_val_adj) %>% kbl() %>% kable_styling()
+```
 
 ```{r, fig.height=25, fig.width=25, warning=FALSE, message=FALSE,out.height=800,out.width=800}
 myfeatures<-sig_list$id
@@ -457,6 +492,5 @@ CombinePlots(plots, n_col)
 
 ```
 
-```
-```
+
 ## References
