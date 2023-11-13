@@ -351,18 +351,7 @@ for(i in 1:length(plots)) {
 }
 CombinePlots(plots)
 ```
-Here are the additional genes requested by Max:
 
-```{r, fig.height=10, warning=FALSE, message=FALSE}
-goi<-c("ABCC8","KCNJ8","KCNJ11")
-
-plots <- VlnPlot(filtered_seu,group.by="celltype", split.by = "celltype",features=goi,combine=FALSE) 
-
-for(i in 1:length(plots)) {
-  plots[[i]] <- plots[[i]] + geom_boxplot(alpha=0.2) + theme(legend.position = 'none') + scale_fill_manual(values=mycolors) 
-}
-CombinePlots(plots)
-```
 Here are the additional genes requested by Boris:
 ```{r, fig.height=10, warning=FALSE, message=FALSE}
 goi<-c("NALCN")
